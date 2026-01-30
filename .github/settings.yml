@@ -1,0 +1,19 @@
+repository:
+  name: RiftLens
+  description: Outil DD de cohérence: graphe, composantes, séries, exports JSON/CSV.
+  topics:
+    - python
+    - ci
+    - dd
+    - observability
+    - graph
+    - coherence
+has_issues: true
+has_projects: false
+has_wiki: false
+has_discussions: false
+delete_branch_on_merge: true
+allow_squash_merge: true
+allow_merge_commit: false
+allow_rebase_merge: false
+default_branch: main
