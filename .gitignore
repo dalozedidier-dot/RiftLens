@@ -18,6 +18,8 @@ vault_test/
 
 # Data
 data/
+!data/
+!data/multi.csv
 # Test fixtures remain tracked
 !tests/data/
 
