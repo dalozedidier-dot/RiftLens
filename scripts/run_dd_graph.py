@@ -2,7 +2,7 @@
 from pathlib import Path
 import argparse
 
-from dd_graph_tool.dd_graph import run
+from riftlens.rift_lens import run
 
 
 def main() -> None:

@@ -1,6 +1,6 @@
 repository:
   name: RiftLens
-  description: Outil DD de cohérence: graphe, composantes, séries, exports JSON/CSV.
+  description: "Outil DD de cohérence: graphe, composantes, séries, exports JSON/CSV."
   topics:
     - python
     - ci

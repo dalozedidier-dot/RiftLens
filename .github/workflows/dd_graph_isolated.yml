@@ -29,11 +29,15 @@ jobs:
           pip install pytest
 
       - name: Smoke test
+        env:
+          PYTHONPATH: src
         run: |
           mkdir -p _ci_out
           pytest -q
 
       - name: Run DD-Graph
+        env:
+          PYTHONPATH: src
         run: |
           mkdir -p _ci_out/dd_graph
           python scripts/run_dd_graph.py test_data/multi.csv --corr_threshold 0.5 --out _ci_out/dd_graph --split_compare
