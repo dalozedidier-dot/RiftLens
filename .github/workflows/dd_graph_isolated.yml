@@ -1,0 +1,46 @@
+name: dd_graph_isolated
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: dd-graph-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dd_graph_smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install -r requirements_dd_graph.txt
+          pip install pytest
+
+      - name: Smoke test
+        run: |
+          mkdir -p _ci_out
+          pytest -q
+
+      - name: Run DD-Graph
+        run: |
+          mkdir -p _ci_out/dd_graph
+          python scripts/run_dd_graph.py test_data/multi.csv --corr_threshold 0.5 --out _ci_out/dd_graph --split_compare
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dd_graph_artifacts
+          path: |
+            _ci_out/dd_graph
