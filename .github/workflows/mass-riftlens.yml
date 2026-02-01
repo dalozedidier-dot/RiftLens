@@ -1,0 +1,189 @@
+name: mass-riftlens
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Nombre d'itérations (ex 200)"
+        required: false
+        default: "200"
+      n:
+        description: "Lignes par dataset multi.csv"
+        required: false
+        default: "500"
+      seed_base:
+        description: "Base seed (seed = seed_base + i)"
+        required: false
+        default: "3000"
+      thresholds:
+        description: "Seuils corr-threshold (csv)"
+        required: false
+        default: "0.25,0.50,0.70,0.80"
+      corr_strength:
+        description: "Force de corrélation synthétique (0..1)"
+        required: false
+        default: "0.85"
+      keep_outputs:
+        description: "Conserver les sorties par run (true/false)"
+        required: false
+        default: "false"
+
+concurrency:
+  group: riftlens-mass-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mass:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Ensure .github/constraints.txt exists (generated if missing)
+        run: |
+          set -euo pipefail
+          if [ -f .github/constraints.txt ]; then
+            echo ".github/constraints.txt present"
+            exit 0
+          fi
+          mkdir -p .github
+          cat > .github/constraints.txt << 'EOF'
+          numpy==1.26.4
+          pandas==2.2.2
+          scipy==1.13.1
+          matplotlib==3.9.2
+          networkx==3.3
+          pillow==10.4.0
+          jsonschema==4.23.0
+          pytest==8.3.3
+          python-dateutil==2.9.0.post0
+          pytz==2024.1
+          tzdata==2024.1
+          six==1.17.0
+          packaging==24.1
+          typing-extensions==4.12.2
+          EOF
+          sed -n '1,200p' .github/constraints.txt
+
+      - name: Install deps (pinned via .github/constraints.txt)
+        run: |
+          set -euo pipefail
+          python -m pip install -U pip
+          if [ -f requirements.txt ] && [ -s requirements.txt ]; then
+            pip install -r requirements.txt -c .github/constraints.txt
+          fi
+          if [ -f requirements-dev.txt ] && [ -s requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt -c .github/constraints.txt
+          fi
+          pip install -e . --no-deps
+
+      - name: Mass run
+        env:
+          RUNS: ${{ github.event.inputs.runs }}
+          N: ${{ github.event.inputs.n }}
+          SEED_BASE: ${{ github.event.inputs.seed_base }}
+          THRESHOLDS: ${{ github.event.inputs.thresholds }}
+          CORR: ${{ github.event.inputs.corr_strength }}
+          KEEP: ${{ github.event.inputs.keep_outputs }}
+        run: |
+          set -euo pipefail
+          mkdir -p _ci_out/mass
+          python - << 'PY'
+          import csv, json, os, subprocess, hashlib
+          from pathlib import Path
+          import numpy as np
+          import pandas as pd
+
+          runs = int(os.environ["RUNS"])
+          n = int(os.environ["N"])
+          seed_base = int(os.environ["SEED_BASE"])
+          thresholds = [float(x.strip()) for x in os.environ["THRESHOLDS"].split(",") if x.strip()]
+          corr = float(os.environ["CORR"])
+          keep = (os.environ.get("KEEP","false").strip().lower() == "true")
+
+          out_root = Path("_ci_out/mass")
+          out_root.mkdir(parents=True, exist_ok=True)
+
+          def run_cmd(cmd):
+            p = subprocess.run(cmd, capture_output=True, text=True)
+            if p.returncode != 0:
+              raise RuntimeError("cmd_failed\ncmd=%s\nstdout=\n%s\nstderr=\n%s" % (" ".join(cmd), p.stdout, p.stderr))
+
+          def sha256_file(p: Path) -> str:
+            h = hashlib.sha256()
+            with p.open("rb") as f:
+              for chunk in iter(lambda: f.read(1024*1024), b""):
+                h.update(chunk)
+            return h.hexdigest()
+
+          rows = []
+          for i in range(1, runs + 1):
+            seed = seed_base + i
+            rng = np.random.default_rng(seed)
+
+            t = np.arange(n, dtype=float)
+            x = rng.normal(0.0, 1.0, size=n)
+
+            # y corrélé à x selon corr_strength
+            eps = rng.normal(0.0, 1.0, size=n)
+            y = corr * x + (1.0 - corr) * eps
+
+            # z indépendant
+            z = rng.normal(0.0, 1.0, size=n)
+
+            df = pd.DataFrame({"t": t, "x": x, "y": y, "z": z})
+
+            run_dir = out_root / f"run_{i:04d}"
+            data_dir = run_dir / "datasets"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            multi_csv = data_dir / "multi.csv"
+            df.to_csv(multi_csv, index=False)
+
+            for thr in thresholds:
+              tag = f"thr_{thr:.2f}"
+              out_dir = (run_dir / "outputs" / tag) if keep else (run_dir / "_tmp" / tag)
+              out_dir.mkdir(parents=True, exist_ok=True)
+
+              run_cmd(["python", "-m", "riftlens", str(multi_csv), "--corr-threshold", str(thr), "--output-dir", str(out_dir)])
+
+              report_path = out_dir / "graph_report.json"
+              obj = json.loads(report_path.read_text(encoding="utf-8"))
+              n_nodes = int(obj.get("n_nodes", 0))
+              n_edges = int(obj.get("n_edges", 0))
+
+              rows.append({
+                "run": i,
+                "seed": seed,
+                "n": n,
+                "corr_strength": corr,
+                "threshold": thr,
+                "n_nodes": n_nodes,
+                "n_edges": n_edges,
+                "graph_report_sha256": sha256_file(report_path),
+              })
+
+              if not keep:
+                # garder juste graph_report.json pour trace minimale
+                keep_dir = run_dir / "reports" / tag
+                keep_dir.mkdir(parents=True, exist_ok=True)
+                (keep_dir / "graph_report.json").write_text(report_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+          df_out = pd.DataFrame(rows)
+          df_out.to_csv(out_root / "summary.csv", index=False)
+          (out_root / "summary.json").write_text(df_out.to_json(orient="records", indent=2), encoding="utf-8")
+          print("wrote", (out_root / "summary.csv").resolve())
+          PY
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: riftlens-mass
+          path: _ci_out/mass/**
