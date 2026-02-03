@@ -12,17 +12,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Abort if token missing
-        env:
-          REPO_SETTINGS_TOKEN: ${{ secrets.REPO_SETTINGS_TOKEN }}
+      - name: Detect token
+        id: token
+        shell: bash
         run: |
-          if [ -z "${REPO_SETTINGS_TOKEN}" ]; then
+          if [ -n "${{ secrets.REPO_SETTINGS_TOKEN }}" ]; then
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
             echo "REPO_SETTINGS_TOKEN absent. Rien à appliquer."
-            exit 0
           fi
 
       - name: Apply repository settings
-        uses: mooseburger/repository-settings-action@v0.1.3
+        if: steps.token.outputs.has_token == 'true'
+        uses: mooseburgr/repository-settings-action@v1
         with:
           token: ${{ secrets.REPO_SETTINGS_TOKEN }}
           settings-path: .github/settings.yml
